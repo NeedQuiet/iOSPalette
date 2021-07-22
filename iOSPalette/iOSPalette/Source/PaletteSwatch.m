@@ -7,6 +7,7 @@
 //
 
 #import "PaletteSwatch.h"
+#import "PaletteColorUtils.h"
 
 @interface PaletteSwatch ()
 
@@ -47,43 +48,7 @@
  *     hsl[2] is Lightness [0...1]
  */
 - (NSArray*)getHsl{
-
-    float rf,gf,bf;
-    
-    rf = (float)_red /255.0f, gf =  (float)_green / 255, bf = (float)_blue / 255;
-    float max,min;
-    max = MAX(rf, gf) > bf?MAX(rf, gf):bf;
-    min = MIN(rf, gf) < bf?MIN(rf, gf):bf;
-    float deltaMaxMin = max - min;
-    
-    float l = (max+min)/2.0;
-    float h,s;
-    
-    if(max == min){
-        h = s = 0.0F;
-    }else{
-        if (max == rf){
-//            h = (gf - bf)/deltaMaxMin % 6.0F;
-        }else{
-            if (max == gf){
-                h = (bf - rf)/deltaMaxMin + 2.0F;
-            }else{
-                h = (rf - gf)/deltaMaxMin + 4.0F;
-            }
-        }
-    }
-    s = deltaMaxMin / (1.0f - fabsf(2.0f * l - 1.0f));
-    
-//    h = h * 60.0F % 360.0F;
-    if (h<0.0F){
-        h += 360.0F;
-    }
-    NSArray *hsl = @[[NSNumber numberWithFloat:constrain(h, 0.0F, 360.0F)],[NSNumber numberWithFloat:constrain(s, 0.0F, 1.0F)],[NSNumber numberWithFloat:constrain(l, 0.0F, 1.0F)]];
-    return hsl;
-}
-
-float constrain(float amount,float low,float high){
-    return amount > high ? high : amount < low ? low : amount;
+    return rgb888ToHSL(_red,_green,_blue);
 }
 
 - (NSInteger)approximateRed:(NSInteger)color{

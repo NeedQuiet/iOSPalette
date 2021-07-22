@@ -18,4 +18,7 @@
 
 + (NSInteger)modifyWordWidthWithValue:(NSInteger)value currentWidth:(NSInteger)currentWidth targetWidth:(NSInteger)targetWidth;
 
+NSArray * rgb555ToHSL(NSInteger rgb555);
+NSArray * rgb888ToHSL(NSInteger red,NSInteger green,NSInteger blue);
+
 @end

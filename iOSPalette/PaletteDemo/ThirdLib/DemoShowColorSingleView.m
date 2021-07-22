@@ -49,6 +49,7 @@
     NSString *percentageText;
     if (![model isKindOfClass:[PaletteColorModel class]]){
         showText = [NSString stringWithFormat:@"%@:识别失败",modeKey];
+        self.backgroundColor = [UIColor blackColor];
     }else{
         showText = [NSString stringWithFormat:@"%@:%@",modeKey,model.imageColorString];
         percentageText = [NSString stringWithFormat:@"%.1f%@",model.percentage*100,@"%"];

@@ -119,6 +119,13 @@
             
             weakSelf.allModeColorDic = allModeColorDic;
             [weakSelf.colorDisplayView reloadData];
+            NSLog(@"[Color] ---------------");
+            for (NSString *key in allModeColorDic.allKeys) {
+                PaletteColorModel *model = allModeColorDic[key];
+                if ([model isKindOfClass:[PaletteColorModel class]]){
+                    NSLog(@"[Color] %@: %@",key,model.imageColorString);
+                }
+            }
         }];
         
     } failureBlock:^(NSError *error) {

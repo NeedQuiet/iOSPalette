@@ -18,20 +18,28 @@ typedef NS_ENUM(NSInteger,COMPONENT_COLOR){
 
 const NSInteger QUANTIZE_WORD_WIDTH = 5;
 const NSInteger QUANTIZE_WORD_MASK = (1 << QUANTIZE_WORD_WIDTH) - 1;
-const CGFloat resizeArea = 160 * 160;
+const CGFloat resizeArea = 112 * 112;
 
-int hist[32768];
+int hist[32768];// 2进制 2的15次幂 1000000000000000
+
+/**
+ VBox是一个新的概念，它理解起来稍微抽象一点。
+ 可以这样来理解，我们拥有的颜色过多，但是我们只需要提取出例如16种颜色，
+ 用16个“筐”把颜色相近的颜色筐在一起，最终用每个筐的平均颜色来代表提取出来的16种主色调
+ */
 
 @interface VBox()
 
+// lowerIndex和upperIndex指的是在所有的颜色数组distinctColors中，VBox所持有的颜色范围
+// distinctColors中，VBox所持有的lowerIndex。
 @property (nonatomic,assign) NSInteger lowerIndex;
-
+// distinctColors中，VBox所持有的upperIndex。
 @property (nonatomic,assign) NSInteger upperIndex;
 
 @property (nonatomic,strong) NSMutableArray *distinctColors;
-
+// VBox所持有的颜色范围中，一共有多少个像素点
 @property (nonatomic,assign) NSInteger population;
-
+// 以下为R,G,B值各自的最大最小值。
 @property (nonatomic,assign) NSInteger minRed;
 
 @property (nonatomic,assign) NSInteger maxRed;
@@ -302,6 +310,13 @@ int hist[32768];
 
 @end
 
+@interface PFilter : NSObject
+- (BOOL)isAllowed:(NSArray *)hsl;
+- (BOOL)isBlack:(NSArray *)hsl;
+- (BOOL)isWhite:(NSArray *)hsl;
+- (BOOL)isNearRedILine:(NSArray *)hsl;
+@end
+
 @interface Palette ()
 
 @property (nonatomic,strong) UIImage *image;
@@ -328,6 +343,8 @@ int hist[32768];
 /** needColorDic */
 @property (nonatomic,assign) BOOL isNeedColorDic;
 
+@property (nonatomic, strong) NSMutableArray <PFilter *> *mFilters;
+
 @end
 
 @implementation Palette
@@ -347,15 +364,19 @@ int hist[32768];
 }
 
 - (void)startToAnalyzeForTargetMode:(PaletteTargetMode)mode withCallBack:(GetColorBlock)block{
+    // 创建mFiletes，后面过滤用
+    self.mFilters = [NSMutableArray arrayWithArray:@[[PFilter new]]];
+    
+    // 创建要生成的目标颜色数组 NSArray * <PaletteTarget *>targetArray
     [self initTargetsWithMode:mode];
     
-    //Check the image is nil or not
+    //检测图片是否为空
     if (!_image){
         NSDictionary *userInfo = @{
-                                   NSLocalizedDescriptionKey: NSLocalizedString(@"Operation fail", nil),
-                                   NSLocalizedFailureReasonErrorKey: NSLocalizedString(@"The image is nill.", nil),
-                                   NSLocalizedRecoverySuggestionErrorKey: NSLocalizedString(@"Check the image input please", nil)
-                                   };
+            NSLocalizedDescriptionKey: NSLocalizedString(@"Operation fail", nil),
+            NSLocalizedFailureReasonErrorKey: NSLocalizedString(@"The image is nill.", nil),
+            NSLocalizedRecoverySuggestionErrorKey: NSLocalizedString(@"Check the image input please", nil)
+        };
         NSError *nullImageError = [NSError errorWithDomain:NSCocoaErrorDomain code:NSFileNoSuchFileError userInfo:userInfo];
         block(nil,nil,nullImageError);
         return;
@@ -364,67 +385,72 @@ int hist[32768];
     [self startToAnalyzeImage];
 }
 
+// 开始分析图片
 - (void)startToAnalyzeImage{
-
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^{
+        [self clearHistArray]; // 清空Hist数组
         
-        [self clearHistArray];
-        
-        // Get raw pixel data from image
+        // 压缩图片，从图像中获取原始像素数据，将image转为rawData
         unsigned char *rawData = [self rawPixelDataFromImage:_image];
         if (!rawData || self.pixelCount <= 0){
             NSDictionary *userInfo = @{
-                                       NSLocalizedDescriptionKey: NSLocalizedString(@"Operation fail", nil),
-                                        NSLocalizedFailureReasonErrorKey: NSLocalizedString(@"The image is nill.", nil),
-                                        NSLocalizedRecoverySuggestionErrorKey: NSLocalizedString(@"Check the image input please", nil)
-                                           };
+                NSLocalizedDescriptionKey: NSLocalizedString(@"Operation fail", nil),
+                NSLocalizedFailureReasonErrorKey: NSLocalizedString(@"The image is nill.", nil),
+                NSLocalizedRecoverySuggestionErrorKey: NSLocalizedString(@"Check the image input please", nil)
+            };
             NSError *nullImageError = [NSError errorWithDomain:NSCocoaErrorDomain code:NSFileNoSuchFileError userInfo:userInfo];
             _getColorBlock(nil,nil,nullImageError);
             return;
         }
         
+        // 压缩图片，遍历图片像素，引出颜色直方图的概念。并将不同的颜色存入新的颜色数组
         NSInteger red,green,blue;
         for (int pixelIndex = 0 ; pixelIndex < self.pixelCount; pixelIndex++){
-            
             red   = (NSInteger)rawData[pixelIndex*4+0];
             green = (NSInteger)rawData[pixelIndex*4+1];
             blue  = (NSInteger)rawData[pixelIndex*4+2];
             
-            //switch RGB888 to RGB555
+            /**
+             将RGB888颜色空间的颜色转变成RGB555颜色空间，这样就会使整个直方图数组以及颜色数组长度大大减小，又不会太影响计算结果。
+             注：正常的RGB24是由24位即3个字节来描述一个像素，R、G、B各8位。而实际使用中为了减少图像数据的尺寸，如视频领域，对R、G、B所使用的位数进行的缩减，如：
+                 RGB565（16位） 就是R-5bit，G-6bit，B-5bit
+                 RGB555（16位） 就是R-5bit，G-5bit，B-5bit ；有1位未用
+                 RGB888（24位） 就是R-8bit，G-8bit，B-8bit ；其实这就是RGB24
+             */
             red = [PaletteColorUtils modifyWordWidthWithValue:red currentWidth:8 targetWidth:QUANTIZE_WORD_WIDTH];
             green = [PaletteColorUtils modifyWordWidthWithValue:green currentWidth:8 targetWidth:QUANTIZE_WORD_WIDTH];
             blue = [PaletteColorUtils modifyWordWidthWithValue:blue currentWidth:8 targetWidth:QUANTIZE_WORD_WIDTH];
             
             NSInteger quantizedColor = red << 2*QUANTIZE_WORD_WIDTH | green << QUANTIZE_WORD_WIDTH | blue;
+            // 通过累加实现 ： hist [color] = color出现的次数
             hist [quantizedColor] ++;
         }
         
         free(rawData);
         
-        NSInteger distinctColorCount = 0;
+        // 将不同的颜色存进数组 distinctColors，留在后面进行判断。
+        NSInteger distinctColorCount = 0; // 不同颜色的数量
         NSInteger length = sizeof(hist)/sizeof(hist[0]);
-        for (NSInteger color = 0 ; color < length ;color++){
+        _distinctColors = [[NSMutableArray alloc]init];
+        
+        for (NSInteger color = 0; color < length; color++){
+            // 除去忽略的颜色
             if (hist[color] > 0 && [self shouldIgnoreColor:color]){
                 hist[color] = 0;
             }
             if (hist[color] > 0){
+                [_distinctColors addObject: [NSNumber numberWithInteger:color]];
                 distinctColorCount ++;
             }
         }
-        
-        NSInteger distinctColorIndex = 0;
-        _distinctColors = [[NSMutableArray alloc]init];
-        for (NSInteger color = 0; color < length ;color++){
-            if (hist[color] > 0){
-                [_distinctColors addObject: [NSNumber numberWithInteger:color]];
-                distinctColorIndex++;
-            }
-        }
-        
-        // distinctColorIndex should be equal to (length - 1)
-        distinctColorIndex--;
-        
+       
         if (distinctColorCount <= kMaxColorNum){
+            /**
+             这里引出了一个新的概念，叫Swatch(样本)。
+             Swatch是最终被作为参考进行模式筛选的数据结构，它有两个最主要的属性:
+                1. Color：这个Color是最终要被展示出来的Color，所以需要的是RGB888空间的颜色。
+                2. Population：它来自于hist直方图。是作为之后进行模式筛选的时候一个重要的权重因素。
+             */
             NSMutableArray *swatchs = [[NSMutableArray alloc]init];
             for (NSInteger i = 0;i < distinctColorCount ; i++){
                 NSInteger color = [_distinctColors[i] integerValue];
@@ -446,12 +472,15 @@ int hist[32768];
             
             _swatchArray = [swatchs copy];
         }else{
+            /**
+                如果颜色个数超出了最大颜色数，则需要通过VBox分裂的方式，找到代表平均颜色的Swatch。
+             */
             _priorityArray = [[PriorityBoxArray alloc]init];
-            VBox *colorVBox = [[VBox alloc]initWithLowerIndex:0 upperIndex:distinctColorIndex colorArray:_distinctColors];
+            VBox *colorVBox = [[VBox alloc]initWithLowerIndex:0 upperIndex:distinctColorCount-1 colorArray:_distinctColors];
             [_priorityArray addVBox:colorVBox];
-            // split the VBox
+            // 分裂 VBox
             [self splitBoxes:_priorityArray];
-            //Switch VBox to Swatch
+            //将VBox 转为 Swatch样本，生成平均色数组
             self.swatchArray = [self generateAverageColors:_priorityArray];
         }
         
@@ -483,7 +512,7 @@ int hist[32768];
     NSMutableArray *vboxArray = [array getVBoxArray];
     for (VBox *vbox in vboxArray){
         PaletteSwatch *swatch = [vbox getAverageColor];
-        if (swatch){
+        if (swatch && ![self shouldIgnoreColorByHSL:swatch.getHsl]){
             [swatchs addObject:swatch];
         }
     }
@@ -491,23 +520,23 @@ int hist[32768];
 }
 
 #pragma mark - image compress
-
+//将image转为rawData
 - (unsigned char *)rawPixelDataFromImage:(UIImage *)image{
-    // Get cg image and its size
+    // 压缩图片至 resizeArea
+    image = [self scaleDownImage:image];
     
-//    image = [self scaleDownImage:image];
-    
+    // 获取cgImage和其大小
     CGImageRef cgImage = [image CGImage];
     NSUInteger width = CGImageGetWidth(cgImage);
     NSUInteger height = CGImageGetHeight(cgImage);
     
-    // Allocate storage for the pixel data
+    // 创建rawData，为像素数据分配内存
     unsigned char *rawData = (unsigned char *)malloc(height * width * 4);
     
-    // If allocation failed, return NULL
+    // 如果失败，返回NULL
     if (!rawData) return NULL;
     
-    // Create the color space
+    // 创建色彩空间 (3色)
     CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
     
     // Set some metrics
@@ -515,27 +544,27 @@ int hist[32768];
     NSUInteger bytesPerRow = bytesPerPixel * width;
     NSUInteger bitsPerComponent = 8;
     
-    // Create context using the storage
+    // 利用rawData创建 context 上下文
     CGContextRef context = CGBitmapContextCreate(rawData, width, height, bitsPerComponent, bytesPerRow, colorSpace, kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Big);
     
-    // Release the color space
+    // 释放colorSpace
     CGColorSpaceRelease(colorSpace);
     
-    // Draw the image into the storage
+    // 绘制图像
     CGContextDrawImage(context, CGRectMake(0, 0, width, height), cgImage);
     
     // We are done with the context
     CGContextRelease(context);
     
-    // Write pixel count to passed pointer
+    // 像素点数量
     self.pixelCount = (NSInteger)width * (NSInteger)height;
     
     // Return pixel data (needs to be freed)
     return rawData;
 }
 
+// 压缩图片
 - (UIImage*)scaleDownImage:(UIImage*)image{
-    
     CGImageRef cgImage = [image CGImage];
     NSUInteger width = CGImageGetWidth(cgImage);
     NSUInteger height = CGImageGetHeight(cgImage);
@@ -554,7 +583,6 @@ int hist[32768];
     }else{
         return image;
     }
-    
 }
 
 - (void)initTargetsWithMode:(PaletteTargetMode)mode{
@@ -614,7 +642,6 @@ int hist[32768];
 }
 
 #pragma mark - utils method
-
 - (void)clearHistArray{
     for (NSInteger i = 0;i<32768;i++){
         hist[i] = 0;
@@ -622,6 +649,18 @@ int hist[32768];
 }
 
 - (BOOL)shouldIgnoreColor:(NSInteger)color{
+    NSArray * hsl = rgb555ToHSL(color);
+    return [self shouldIgnoreColorByHSL:hsl];
+}
+
+- (BOOL)shouldIgnoreColorByHSL:(NSArray *)hsl{
+    if (_mFilters && _mFilters.count > 0) {
+        for (PFilter *filter in _mFilters) {
+            if (![filter isAllowed:hsl]) {
+                return YES;
+            }
+        }
+    }
     return NO;
 }
 
@@ -726,6 +765,33 @@ int hist[32768];
     }
     
     return saturationScore + luminanceScore + populationScore;
+}
+
+@end
+
+@implementation PFilter
+
+float BLACK_MAX_LIGHTNESS = 0.05f;
+float WHITE_MIN_LIGHTNESS = 0.95f;
+
+- (BOOL)isAllowed:(NSArray *)hsl{
+    return ![self isBlack:hsl] && ![self isWhite:hsl] && ![self isNearRedILine:hsl];
+}
+
+- (BOOL)isBlack:(NSArray *)hsl{
+    float value2 = [hsl[2] floatValue];
+    return value2 <= BLACK_MAX_LIGHTNESS;
+}
+
+- (BOOL)isWhite:(NSArray *)hsl{
+    float value2 = [hsl[2] floatValue];
+    return value2 >= WHITE_MIN_LIGHTNESS;
+}
+
+- (BOOL)isNearRedILine:(NSArray *)hsl{
+    float value0 = [hsl[0] floatValue];
+    float value1 = [hsl[1] floatValue];
+    return value0 >= 10.f && value0 <= 37.f && value1 <= 0.82f;
 }
 
 @end

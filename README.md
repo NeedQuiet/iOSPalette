@@ -1,3 +1,13 @@
+# Fork日记
+>2021年07月22日10:12:44
+
+- 工作中有用到主题色相关的需求，集成原作者的代码后，发现部分图片的主题色获取，在iOS和Android的表现上不一致，详细对比后，发现有部分代码的逻辑以及实现方式不一致；
+- 因此这里会在原代码基础上，基于Android同事提供的最新的的palette库(代码也上传了)，进行调整；
+- 修改点：
+  - 开放scaleDownImage方法，resizeArea改为112 * 112
+  - 完善补全shouldIgnoreColor方法，增加PFilter对象用于过滤
+  - 增加rgb888ToHSL、rgb555ToHSL方法并参照Android代码（colorToHSL）进行调整
+
 # iOSPalette
 
 ## 0.1 TODO
