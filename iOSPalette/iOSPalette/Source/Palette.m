@@ -571,7 +571,7 @@ int hist[32768];// 2进制 2的15次幂 1000000000000000
     double scaleRatio;
     CGFloat imageSize = width * height;
     if (imageSize > resizeArea){
-        scaleRatio = resizeArea / ((double)imageSize);
+        scaleRatio = sqrt(resizeArea / ((double)imageSize));
         CGSize scaleSize = CGSizeMake((CGFloat)(width * scaleRatio),(CGFloat)(height * scaleRatio));
         UIGraphicsBeginImageContext(scaleSize);
         [_image drawInRect:CGRectMake(0.0f, 0.0f, scaleSize.width, scaleSize.height)];
